@@ -4,23 +4,57 @@ import configparser
 import yaml
 
 
-
-#Obtaining Environmentvariables for nova
-OS_USERNAME = os.environ['OS_USERNAME']
-OS_PASSWORD = os.environ['OS_PASSWORD']
-OS_AUTH_URL = os.environ['OS_AUTH_URL']
-OS_TENANT_NAME = os.environ['OS_TENANT_NAME']
-
 OS_NICNAME = "bibiserv"
 OS_FLAVOUR = "c1r8d49"
 SSH_KEY = ""
 
 
+def checkEnvironmentFromOS(key):
+    return key in os.environ
+
+def validateEnvironmentDict(dict, configFile):
+    newDict = {}
+    itemList = dict.items()
+    for item in itemList:
+        if item[1] == "":
+            print(item[0] + " is not set, looking for environment variable from OS.")
+            if checkEnvironmentFromOS(item[0]):
+                print("Found corresponding environment variable!")
+                newDict[item[0]] = os.environ[item[0]]
+                continue
+            else:
+                print("Looking for variable in .ini file...")
+                try:
+                    newDict[item[0]] = configFile['config'][item[0]]
+                    print("..found key in config file!")
+
+                    continue
+                except KeyError:
+                    print("Key named " + item[0] + " not found in OS or config file...exiting")
+                    exit(-1)
+        #print(item[0] + " seems to be properly set.")
+        newDict[item[0]] = item[1]
+    #print(newDict)
+    return newDict
+
 
 
 #check and overwrite variables
-def validateVariables():
-    pass
+def setupEnvironmentDict(configFile):
+    #needs to be cleaned up after debugging
+    environmentDict = {}
+    environmentDict['OS_USERNAME'] = ""
+    environmentDict['OS_PASSWORD'] = ""
+    environmentDict['OS_AUTH_URL'] = ""
+    environmentDict['OS_TENANT_NAME'] = ""
+    environmentDict['OS_NICNAME'] = OS_NICNAME
+    environmentDict['OS_FLAVOR'] = OS_FLAVOUR
+    environmentDict['SSH_KEY'] = SSH_KEY
+    environmentDict = validateEnvironmentDict(environmentDict, configFile)
+    print(environmentDict)
+    return environmentDict
+
+
 
 
 
@@ -59,7 +93,14 @@ def setSSH():
 
 
 def loadConfig(path):
-    pass
+    try:
+        config = configparser.ConfigParser()
+        config.read(path)
+        return config
+    except FileNotFoundError:
+        print("Could not find config file at " + path)
+        exit(-1)
+
 
 def loadCloudConfig():
     pass
@@ -77,9 +118,11 @@ def connectOpenstack():
 
 if __name__ == '__main__':
     print("Trying to connect to Openstack...")
-    nova = connectOpenstack()
+    #nova = connectOpenstack()
     print("....it worked!")
-    obtainDesiredFlavor(nova)
+    #obtainDesiredFlavor(nova)
+    configFile = loadConfig("config/example.ini")
+    setupEnvironmentDict(configFile)
 
 
 
