@@ -69,8 +69,8 @@ def obtain_coreos_image(connection):
 def obtainNIC(connection, NICName=OS_NICNAME):
     nicList = connection.networks.list()
     for network in nicList:
-        if network.name == NICName:
-            print("Found network: " + network.name)
+        if network.label == NICName:
+            print("Found network: " + network.label)
             return network
     print("Could not find network! Following networks are available:")
     print(nicList)
@@ -116,7 +116,7 @@ def connectOpenstack(OS_USERNAME, OS_PASSWORD, OS_TENANT_NAME, OS_AUTH_URL):
 
 
 def buildSecurityGroup(connection, id):
-    securityGroup = connection.nova.security_groups.get("7bf17971-183d-4d31-97fe-a5d17630056d")
+    securityGroup = connection.security_groups.get("7bf17971-183d-4d31-97fe-a5d17630056d")
 
     #Right now I can't create Egress Rules, so I have to cheat.
     '''
@@ -149,6 +149,12 @@ if __name__ == '__main__':
 
     #Build Security groups
     securityGroup = buildSecurityGroup(osConnection, strClusterID)
+
+    #testcreate
+    standardNic = obtainNIC(osConnection)
+    standradNicList = []
+    standradNicList.append(standardNic)
+    osConnection.servers.create("test111", obtain_coreos_image(osConnection), obtainDesiredFlavor(osConnection), nics=osConnection.networks.list())
 
 
 
