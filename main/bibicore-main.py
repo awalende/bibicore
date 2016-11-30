@@ -7,7 +7,13 @@ import random
 
 OS_NICNAME = "bibiserv"
 OS_FLAVOUR = "c1r8d49"
-SSH_KEY = "huih"
+
+'''
+TODO:
+Parse config file from args.
+Customize cloud config yaml
+Figure out SSH.
+'''
 
 
 def checkEnvironmentFromOS(key):
@@ -35,7 +41,7 @@ def validateEnvironmentDict(dict, configFile):
                     exit(-1)
         #print(item[0] + " seems to be properly set.")
         newDict[item[0]] = item[1]
-    #print(newDict)
+    newDict = setSSH(newDict, configFile)
     return newDict
 
 
@@ -49,9 +55,8 @@ def createEnvironmentDict(configFile):
     environmentDict['OS_TENANT_NAME'] = ""
     environmentDict['OS_NICNAME'] = OS_NICNAME
     environmentDict['OS_FLAVOR'] = OS_FLAVOUR
-    environmentDict['SSH_KEY'] = SSH_KEY
+    environmentDict['SSH_KEY'] = ''
     environmentDict = validateEnvironmentDict(environmentDict, configFile)
-    #print(environmentDict)
     return environmentDict
 
 
@@ -76,6 +81,7 @@ def obtainNIC(connection, NICName=OS_NICNAME):
     print(nicList)
     exit(-1)
 
+
 def obtainDesiredFlavor(connection, flavorName=OS_FLAVOUR):
     flavorList = connection.flavors.list()
     for flavor in flavorList:
@@ -86,9 +92,13 @@ def obtainDesiredFlavor(connection, flavorName=OS_FLAVOUR):
     print(flavorList)
     exit(-1)
 
-def setSSH():
-    pass
-
+def setSSH(dict, configFile):
+    #Maybe give support for manual ssh key input
+    try:
+        dict['SSH_KEY'] = configFile['security']['OS_SSHKEYPAIR']
+    except KeyError:
+        print("WARNING: No SSH Keypair could be set for the instances, you may have difficulties logging in with ssh.")
+    return dict
 
 def loadConfig(path):
     try:
@@ -154,7 +164,10 @@ if __name__ == '__main__':
     standardNic = obtainNIC(osConnection)
     standradNicList = []
     standradNicList.append(standardNic)
-    osConnection.servers.create("test111", obtain_coreos_image(osConnection), obtainDesiredFlavor(osConnection), nics=osConnection.networks.list())
+
+
+    #Why the hell do I have to put this in dict list
+    #osConnection.servers.create("test111", obtain_coreos_image(osConnection), obtainDesiredFlavor(osConnection), nics=[{'net-id': standardNic.id}])
 
 
 
