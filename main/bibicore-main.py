@@ -8,6 +8,7 @@ import random
 OS_NICNAME = "bibiserv"
 OS_FLAVOUR = "c1r8d49"
 
+
 '''
 TODO:
 Parse config file from args.
