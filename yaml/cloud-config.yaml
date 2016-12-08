@@ -1,0 +1,24 @@
+#cloud-config
+
+coreos:
+  etcd2:
+    # SET HERE THE URL FOR THE CREATED TOKEN
+    discovery: http://192.168.10.246:4001/v2/keys/_etcd/registry/1234/
+    advertise-client-urls: http://$private_ipv4:2379,http://$private_ipv4:4001
+    initial-advertise-peer-urls: http://$private_ipv4:2380
+    listen-client-urls: http://0.0.0.0:2379,http://0.0.0.0:4001
+    listen-peer-urls: http://$private_ipv4:2380
+  units:
+    - name: etcd2.service
+      command: start
+    - name: fleet.service
+      command: start
+    - name: docker.servicea
+      drop-ins:
+        - name: 20-http-proxy.conf
+          content: |
+            [Service]
+            Environment="HTTP_PROXY=http://proxy.cebitec.uni-bielefeld.de:3128"
+            Environment="HTTPS_PROXY=https://proxy.cebitec.uni-bielefeld.de:3128"
+            Environment="NO_PROXY=localhost,127.0.0.1,169.254.169.254"
+      command: restart

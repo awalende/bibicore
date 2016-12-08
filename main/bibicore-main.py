@@ -8,6 +8,9 @@ import random
 OS_NICNAME = "bibiserv"
 OS_FLAVOUR = "c1r8d49"
 
+CLOUD_CONFIG_PATH="yaml/cloud-config.yaml"
+DISCOVERY_CONFIG_PATH = "yaml/discovery.yaml"
+
 
 '''
 TODO:
@@ -38,9 +41,7 @@ def validateEnvironmentDict(dict, configFile):
 
                     continue
                 except KeyError:
-                    print("Key named " + item[0] + " not found in OS or config file...exiting")
-                    exit(-1)
-        #print(item[0] + " seems to be properly set.")
+                    print("Key named " + item[0] + " not found in OS or config file!")
         newDict[item[0]] = item[1]
     newDict = setSSH(newDict, configFile)
     return newDict
@@ -57,6 +58,7 @@ def createEnvironmentDict(configFile):
     environmentDict['OS_NICNAME'] = OS_NICNAME
     environmentDict['OS_FLAVOR'] = OS_FLAVOUR
     environmentDict['SSH_KEY'] = ''
+    environmentDict['DISCOVERY_URL'] = ''
     environmentDict = validateEnvironmentDict(environmentDict, configFile)
     return environmentDict
 
@@ -111,8 +113,13 @@ def loadConfig(path):
         exit(-1)
 
 
-def loadCloudConfig():
+def loadCloudConfig(configPath):
     pass
+
+
+def generateDiscoveryToken():
+    pass
+
 
 
 
@@ -143,6 +150,26 @@ def buildSecurityGroup(connection, id):
     return securityGroup
 
 
+'''
+Check if we have a discovery url in given config file, if not, set a service up
+'''
+def checkDiscoveryService(environmentDict, configFile):
+    try:
+        discurl = configFile['discovery']['DISCOVERY_URL']
+        return discurl
+    except KeyError:
+        return None
+
+def createDiscoveryService(instancePlan):
+    print("Setting up a discovery instance...")
+    discoveryConfig = open(DISCOVERY_CONFIG_PATH)
+    instanceName = "CoreOS Discovery Service"
+    instancePlan['osConnection'].servers.create(instanceName,
+                                                instancePlan['coreosImage'],
+                                                instancePlan['flavor'],
+                                                nics=[{'net-id': instancePlan['standardNic'].id}],
+                                                userdata=discoveryConfig,
+                                                key_name='awalende')
 
 
 if __name__ == '__main__':
@@ -150,22 +177,34 @@ if __name__ == '__main__':
     clusterID = random.randint(1000, 999999)
     strClusterID = "CoreOS-" + str(clusterID)
     #Prepare Variables and parse config file.
-    configFile = loadConfig("config/example_empty.ini")
+    configFile = loadConfig("/home/awalende/config.ini")
     environmentDict = createEnvironmentDict(configFile)
     #Establish a connection to Openstack
-    osConnection = connectOpenstack(environmentDict['OS_USERNAME'],
+    instancePlan = {}
+    instancePlan['osConnection'] = connectOpenstack(environmentDict['OS_USERNAME'],
                      environmentDict['OS_PASSWORD'],
                      environmentDict['OS_TENANT_NAME'],
                      environmentDict['OS_AUTH_URL'])
 
+    #Obtain ImageID
+    instancePlan['coreosImage'] = obtain_coreos_image(instancePlan['osConnection'])
+
     #Build Security groups
-    securityGroup = buildSecurityGroup(osConnection, strClusterID)
+    instancePlan['securityGroup'] = buildSecurityGroup(instancePlan['osConnection'], strClusterID)
 
-    #testcreate
-    standardNic = obtainNIC(osConnection)
-    standradNicList = []
-    standradNicList.append(standardNic)
+    #Setup Network interface, must be put in list for nova api
+    standardNic = obtainNIC(instancePlan['osConnection'])
+    instancePlan['standardNic'] = standardNic
 
+    #Obtain Flavor
+    instancePlan['flavor'] = obtainDesiredFlavor(instancePlan['osConnection'])
+
+
+
+    #Make sure we have a discovery service running
+    discurl = checkDiscoveryService(environmentDict, configFile)
+    if discurl == None:
+        discurl = createDiscoveryService(instancePlan)
 
     #Why the hell do I have to put this in dict list
     #osConnection.servers.create("test111", obtain_coreos_image(osConnection), obtainDesiredFlavor(osConnection), nics=[{'net-id': standardNic.id}])
