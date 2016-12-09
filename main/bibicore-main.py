@@ -1,8 +1,10 @@
 from novaclient import client
+from time import sleep
 import os
 import configparser
 import yaml
 import random
+
 
 
 OS_NICNAME = "bibiserv"
@@ -153,7 +155,7 @@ def buildSecurityGroup(connection, id):
 '''
 Check if we have a discovery url in given config file, if not, set a service up
 '''
-def checkDiscoveryService(environmentDict, configFile):
+def checkDiscoveryService(environmentDict, configFile, instancePlan):
     try:
         discurl = configFile['discovery']['DISCOVERY_URL']
         return discurl
@@ -161,15 +163,40 @@ def checkDiscoveryService(environmentDict, configFile):
         return None
 
 def createDiscoveryService(instancePlan):
+    print('')
+    print('------------------------------------')
     print("Setting up a discovery instance...")
     discoveryConfig = open(DISCOVERY_CONFIG_PATH)
     instanceName = "CoreOS Discovery Service"
-    instancePlan['osConnection'].servers.create(instanceName,
+    discServiceInstance = instancePlan['osConnection'].servers.create(instanceName,
                                                 instancePlan['coreosImage'],
                                                 instancePlan['flavor'],
                                                 nics=[{'net-id': instancePlan['standardNic'].id}],
                                                 userdata=discoveryConfig,
                                                 key_name='awalende')
+    #print(discServiceInstance)
+    print("Trying to set a floating ip to recently created discovery service...")
+    floatingIpList = instancePlan['osConnection'].floating_ips.list()
+    freeFloatingIp = None
+    for floatingIp in floatingIpList:
+        if floatingIp.pool == 'cebitec' and floatingIp.fixed_ip is None:
+            freeFloatingIp = floatingIp
+            break
+    if freeFloatingIp is None:
+        print("FATAL: No free floating ip could be found...")
+        exit(-1)
+    print("Assigning following floating IP (may take a while): " + str(freeFloatingIp.ip))
+    sleep(6)
+    discServiceInstance.add_floating_ip(freeFloatingIp.ip)
+    print("Discovery Service has been started, it may need a while to fully boot up.")
+    #TODO: REMOVE HARDCODED TENANTNAME
+    print("Discovery internal IP: " + str(discServiceInstance.addresses['bibiserv'][0]['addr']))
+    print("Discovery floating IP: " + str(freeFloatingIp.ip))
+    ipDict = {'internal': discServiceInstance.addresses['bibiserv'][0]['addr'],
+              'floating': freeFloatingIp}
+    return ipDict
+
+
 
 
 if __name__ == '__main__':
@@ -202,9 +229,9 @@ if __name__ == '__main__':
 
 
     #Make sure we have a discovery service running
-    discurl = checkDiscoveryService(environmentDict, configFile)
-    if discurl == None:
-        discurl = createDiscoveryService(instancePlan)
+    discoveryIPdict = checkDiscoveryService(environmentDict, configFile, instancePlan)
+    if discoveryIPdict == None:
+        discoveryIPdict = createDiscoveryService(instancePlan)
 
     #Why the hell do I have to put this in dict list
     #osConnection.servers.create("test111", obtain_coreos_image(osConnection), obtainDesiredFlavor(osConnection), nics=[{'net-id': standardNic.id}])
