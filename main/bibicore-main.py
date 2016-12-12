@@ -4,10 +4,11 @@ import os
 import configparser
 import yaml
 import random
+import requests
 
 
 OS_NICNAME = "bibiserv"
-OS_FLAVOUR = "c1r8d49"
+OS_FLAVOUR = "c1r8d40"
 CLOUD_CONFIG_PATH="yaml/cloud-config.yaml"
 DISCOVERY_CONFIG_PATH = "yaml/discovery.yaml"
 
@@ -121,8 +122,23 @@ def loadCloudConfig(configPath):
     pass
 
 
-def generateDiscoveryToken(floatingIP):
-    print("Trying to create a discovery token on " + str(floatingIP))
+def generateDiscoveryToken(discoveryDict, randomToken, size):
+    print("Trying to create a discovery token on " + str(discoveryDict['floating']))
+    if discoveryDict['newDiscovery']:
+        print("The Discoveryservice has been recently created. Wait until its up. (120 Seconds)")
+        sleep(120)
+    for x in range(30):
+        try:
+            r = requests.put('http://' + str(discoveryDict['floating']) + ':4001' + TOKEN_SUFFIX +
+                             str(randomToken) + '/_config/size',
+                             data={'value': str(size)})
+            print("Generated discovery token..." + '\n' + r.text)
+            return r
+        except ConnectionRefusedError:
+            print("Try again counter: " + str(x))
+            sleep(10)
+            continue
+
 
 
 def connectOpenstack(OS_USERNAME, OS_PASSWORD, OS_TENANT_NAME, OS_AUTH_URL):
@@ -167,7 +183,7 @@ def assignFloatingIP(connection, instance):
     instance.add_floating_ip(freeFloatingIp.ip)
     print("Discovery Service has been started, it may need a while to fully boot up.")
     #TODO: REMOVE HARDCODED TENANTNAME
-    sleep(2)
+    sleep(10)
     print("Discovery internal IP: " + str(instance.addresses['bibiserv'][0]['addr']))
     print("Discovery floating IP: " + str(freeFloatingIp.ip))
     return {'internal': instance.addresses['bibiserv'][0]['addr'],
@@ -182,11 +198,12 @@ def checkDiscoveryService(environmentDict, configFile, instancePlan):
     serverList = instancePlan['osConnection'].servers.list()
     for server in serverList:
         if server.name == 'CoreOS Discovery Service':
-            if len(server.addresses) == 2:
+            if len(server.addresses['bibiserv']) == 2:
                 return  {'internal': server.addresses['bibiserv'][0]['addr'],
-                         'floating': server.addresses['bibiserv'][1]['addr']}
+                         'floating': server.addresses['bibiserv'][1]['addr'],
+                         'newDiscovery': False}
             else:
-                #give it a floating ip
+                #print(len(server.addresses['bibiserv']))
                 return assignFloatingIP(instancePlan['osConnection'], server)
     try:
         discurl = {'superiorIP': configFile['discovery']['DISCOVERY_URL']}
@@ -206,8 +223,10 @@ def createDiscoveryService(instancePlan):
                                                 instancePlan['flavor'],
                                                 nics=[{'net-id': instancePlan['standardNic'].id}],
                                                 userdata=discoveryConfig,
-                                                key_name='awalende')
+                                                key_name='awalende',
+                                                security_groups=[instancePlan['securityGroup'].name])
     ipDict = assignFloatingIP(instancePlan['osConnection'], discServiceInstance)
+    ipDict['newDiscovery'] = True
     return ipDict
 
 
@@ -245,6 +264,6 @@ if __name__ == '__main__':
     if discoveryIPdict is None:
         discoveryIPdict = createDiscoveryService(instancePlan)
 
-    tokenURL = generateDiscoveryToken(discoveryIPdict['floating'])
+    tokenURL = generateDiscoveryToken(discoveryIPdict, strClusterID, 3)
 
 
