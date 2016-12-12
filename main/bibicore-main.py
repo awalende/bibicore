@@ -11,6 +11,9 @@ OS_FLAVOUR = "c1r8d49"
 CLOUD_CONFIG_PATH="yaml/cloud-config.yaml"
 DISCOVERY_CONFIG_PATH = "yaml/discovery.yaml"
 
+TOKEN_TIMEOUT=10
+TOKEN_SUFFIX='/v2/keys/_etcd/registry/'
+
 
 '''
 TODO:
@@ -119,7 +122,7 @@ def loadCloudConfig(configPath):
 
 
 def generateDiscoveryToken(floatingIP):
-    pass
+    print("Trying to create a discovery token on " + str(floatingIP))
 
 
 def connectOpenstack(OS_USERNAME, OS_PASSWORD, OS_TENANT_NAME, OS_AUTH_URL):
@@ -197,6 +200,7 @@ def createDiscoveryService(instancePlan):
     print("Setting up a discovery instance...")
     discoveryConfig = open(DISCOVERY_CONFIG_PATH)
     instanceName = "CoreOS Discovery Service"
+    #TODO: Keyname support in config file
     discServiceInstance = instancePlan['osConnection'].servers.create(instanceName,
                                                 instancePlan['coreosImage'],
                                                 instancePlan['flavor'],
@@ -240,5 +244,7 @@ if __name__ == '__main__':
     discoveryIPdict = checkDiscoveryService(environmentDict, configFile, instancePlan)
     if discoveryIPdict is None:
         discoveryIPdict = createDiscoveryService(instancePlan)
+
+    tokenURL = generateDiscoveryToken(discoveryIPdict['floating'])
 
 
