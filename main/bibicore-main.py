@@ -18,10 +18,11 @@ TOKEN_SUFFIX='/v2/keys/_etcd/registry/'
 
 '''
 TODO:
-Get discovery token in a safe way
-Put discovery token in yaml file and start x instances
-Parse config file from args.
-Customize cloud config yaml
+Dissasociate floating ip after token is generated.
+At end of script, set floating IP to first node and give ip-info to user.
+Remove hardcoded stuff.
+Give some love to the config file.
+Write Readme.
 '''
 
 
