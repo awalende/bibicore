@@ -118,27 +118,26 @@ def loadConfig(path):
         exit(-1)
 
 
-def loadCloudConfig(configPath):
+def prepareCloudConfig(configPath):
     pass
 
 
 def generateDiscoveryToken(discoveryDict, randomToken, size):
     print("Trying to create a discovery token on " + str(discoveryDict['floating']))
+    tokenURL = 'http://' + str(discoveryDict['floating']) + ':4001' + TOKEN_SUFFIX + str(randomToken)
     if discoveryDict['newDiscovery']:
-        print("The Discoveryservice has been recently created. Wait until its up. (120 Seconds)")
-        sleep(120)
+        print("The Discoveryservice has been recently created. Wait until its up.")
+        sleep(30)
     for x in range(30):
         try:
-            r = requests.put('http://' + str(discoveryDict['floating']) + ':4001' + TOKEN_SUFFIX +
-                             str(randomToken) + '/_config/size',
-                             data={'value': str(size)})
+            r = requests.put(tokenURL + '/_config/size', data={'value': str(size)})
             print("Generated discovery token..." + '\n' + r.text)
-            return r
-        except ConnectionRefusedError:
-            print("Try again counter: " + str(x))
+            break
+        except:
+            print("Could not generate token, retrying: " + str(x) + " from " + str(30))
             sleep(10)
             continue
-
+    return tokenURL
 
 
 def connectOpenstack(OS_USERNAME, OS_PASSWORD, OS_TENANT_NAME, OS_AUTH_URL):
@@ -179,7 +178,7 @@ def assignFloatingIP(connection, instance):
         print("FATAL: No free floating ip could be found...")
         exit(-1)
     print("Assigning following floating IP (may take a while): " + str(freeFloatingIp.ip))
-    sleep(6)
+    sleep(10)
     instance.add_floating_ip(freeFloatingIp.ip)
     print("Discovery Service has been started, it may need a while to fully boot up.")
     #TODO: REMOVE HARDCODED TENANTNAME
@@ -187,7 +186,7 @@ def assignFloatingIP(connection, instance):
     print("Discovery internal IP: " + str(instance.addresses['bibiserv'][0]['addr']))
     print("Discovery floating IP: " + str(freeFloatingIp.ip))
     return {'internal': instance.addresses['bibiserv'][0]['addr'],
-            'floating': freeFloatingIp}
+            'floating': instance.addresses['bibiserv'][1]['addr']}
 
 
 '''
@@ -264,6 +263,8 @@ if __name__ == '__main__':
     if discoveryIPdict is None:
         discoveryIPdict = createDiscoveryService(instancePlan)
 
+    #TODO: Parameterize instance count
     tokenURL = generateDiscoveryToken(discoveryIPdict, strClusterID, 3)
+    cloudConfigYaml = prepareCloudConfig('yaml/cloud-config.yaml', tokenURL)
 
 
