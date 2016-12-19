@@ -118,8 +118,17 @@ def loadConfig(path):
         exit(-1)
 
 
-def prepareCloudConfig(configPath):
-    pass
+def prepareCloudConfig(configPath, tokenURL):
+    try:
+       file = open(configPath)
+       yamlFile = yaml.load(file)
+       yamlFile['coreos']['etcd2']['discovery'] = tokenURL
+       modifiedYaml = yaml.dump(yamlFile)
+       modifiedYaml = '#cloud-config\n\n' + modifiedYaml
+       print(modifiedYaml)
+       return modifiedYaml
+    except FileNotFoundError:
+        pass
 
 
 def generateDiscoveryToken(discoveryDict, randomToken, size):
@@ -137,7 +146,7 @@ def generateDiscoveryToken(discoveryDict, randomToken, size):
             print("Could not generate token, retrying: " + str(x) + " from " + str(30))
             sleep(10)
             continue
-    return tokenURL
+    return 'http://' + str(discoveryDict['internal']) + ':4001' + TOKEN_SUFFIX + str(randomToken)
 
 
 def connectOpenstack(OS_USERNAME, OS_PASSWORD, OS_TENANT_NAME, OS_AUTH_URL):
@@ -180,13 +189,14 @@ def assignFloatingIP(connection, instance):
     print("Assigning following floating IP (may take a while): " + str(freeFloatingIp.ip))
     sleep(10)
     instance.add_floating_ip(freeFloatingIp.ip)
-    print("Discovery Service has been started, it may need a while to fully boot up.")
+    #print("Discovery Service has been started, it may need a while to fully boot up.")
     #TODO: REMOVE HARDCODED TENANTNAME
     sleep(10)
     print("Discovery internal IP: " + str(instance.addresses['bibiserv'][0]['addr']))
     print("Discovery floating IP: " + str(freeFloatingIp.ip))
     return {'internal': instance.addresses['bibiserv'][0]['addr'],
-            'floating': instance.addresses['bibiserv'][1]['addr']}
+            'floating': freeFloatingIp.ip,
+            'newDiscovery': False}
 
 
 '''
@@ -229,6 +239,19 @@ def createDiscoveryService(instancePlan):
     return ipDict
 
 
+def createNodeInstance(instancePlan, count):
+    print("Starting instance...")
+    discServiceInstance = instancePlan['osConnection'].servers.create(instancePlan['ClusterName'] + 'node',
+                                                instancePlan['coreosImage'],
+                                                instancePlan['flavor'],
+                                                nics=[{'net-id': instancePlan['standardNic'].id}],
+                                                userdata=instancePlan['cloudConfigYaml'],
+                                                key_name='awalende',
+                                                min_count=count,
+                                                max_count=count,
+                                                security_groups=[instancePlan['securityGroup'].name])
+
+
 
 if __name__ == '__main__':
     #Generate RandomID for this cluster.
@@ -243,6 +266,7 @@ if __name__ == '__main__':
                      environmentDict['OS_PASSWORD'],
                      environmentDict['OS_TENANT_NAME'],
                      environmentDict['OS_AUTH_URL'])
+    instancePlan['ClusterName'] = strClusterID
 
     #Obtain ImageID
     instancePlan['coreosImage'] = obtain_coreos_image(instancePlan['osConnection'])
@@ -265,6 +289,8 @@ if __name__ == '__main__':
 
     #TODO: Parameterize instance count
     tokenURL = generateDiscoveryToken(discoveryIPdict, strClusterID, 3)
-    cloudConfigYaml = prepareCloudConfig('yaml/cloud-config.yaml', tokenURL)
+    instancePlan['cloudConfigYaml'] = prepareCloudConfig(CLOUD_CONFIG_PATH, tokenURL)
 
+
+    createNodeInstance(instancePlan, 3)
 

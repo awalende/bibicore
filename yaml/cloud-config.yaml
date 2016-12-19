@@ -13,7 +13,7 @@ coreos:
       command: start
     - name: fleet.service
       command: start
-    - name: docker.servicea
+    - name: docker.service
       drop-ins:
         - name: 20-http-proxy.conf
           content: |
