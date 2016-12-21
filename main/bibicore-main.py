@@ -1,5 +1,6 @@
 from novaclient import client
 from time import sleep
+import sys
 import os
 import configparser
 import yaml
@@ -7,10 +8,10 @@ import random
 import requests
 
 
-OS_NICNAME = "bibiserv"
-OS_FLAVOUR = "c1r8d40"
-CLOUD_CONFIG_PATH="yaml/cloud-config.yaml"
-DISCOVERY_CONFIG_PATH = "yaml/discovery.yaml"
+
+DIR_PATH = os.path.dirname(os.path.realpath(__file__))
+CLOUD_CONFIG_PATH= DIR_PATH+ "/yaml/cloud-config.yaml"
+DISCOVERY_CONFIG_PATH = DIR_PATH + "/yaml/discovery.yaml"
 
 TOKEN_TIMEOUT=10
 TOKEN_SUFFIX='/v2/keys/_etcd/registry/'
@@ -18,9 +19,7 @@ TOKEN_SUFFIX='/v2/keys/_etcd/registry/'
 
 '''
 TODO:
-Dissasociate floating ip after token is generated.
 At end of script, set floating IP to first node and give ip-info to user.
-Remove hardcoded stuff.
 Give some love to the config file.
 Write Readme.
 '''
@@ -49,7 +48,6 @@ def validateEnvironmentDict(dict, configFile):
                 except KeyError:
                     print("Key named " + item[0] + " not found in OS or config file!")
         newDict[item[0]] = item[1]
-    newDict = setSSH(newDict, configFile)
     return newDict
 
 
@@ -61,10 +59,9 @@ def createEnvironmentDict(configFile):
     environmentDict['OS_PASSWORD'] = ""
     environmentDict['OS_AUTH_URL'] = ""
     environmentDict['OS_TENANT_NAME'] = ""
-    environmentDict['OS_NICNAME'] = OS_NICNAME
-    environmentDict['OS_FLAVOR'] = OS_FLAVOUR
-    environmentDict['SSH_KEY'] = ''
-    environmentDict['DISCOVERY_URL'] = ''
+    environmentDict['OS_FLAVOR'] = ""
+    environmentDict['OS_SSH_NAME'] = ""
+    environmentDict['FLOATING_IP_POOL'] = ""
     environmentDict = validateEnvironmentDict(environmentDict, configFile)
     return environmentDict
 
@@ -80,7 +77,7 @@ def obtain_coreos_image(connection):
     exit(-1)
 
 
-def obtainNIC(connection, NICName=OS_NICNAME):
+def obtainNIC(connection, NICName):
     nicList = connection.networks.list()
     for network in nicList:
         if network.label == NICName:
@@ -91,23 +88,16 @@ def obtainNIC(connection, NICName=OS_NICNAME):
     exit(-1)
 
 
-def obtainDesiredFlavor(connection, flavorName=OS_FLAVOUR):
+def obtainDesiredFlavor(connection, flavorName):
     flavorList = connection.flavors.list()
     for flavor in flavorList:
         if flavor.name == flavorName:
             print("Found desired flavor: " + flavor.name)
             return flavor
-    print("Could not find flavor! Following flavors are available:")
+    print("Could not find flavor: "  + flavorName + "\n" "Following flavors are available:")
     print(flavorList)
     exit(-1)
 
-def setSSH(dict, configFile):
-    #Maybe give support for manual ssh key input
-    try:
-        dict['SSH_KEY'] = configFile['security']['OS_SSHKEYPAIR']
-    except KeyError:
-        print("WARNING: No SSH Keypair could be set for the instances, you may have difficulties logging in with ssh.")
-    return dict
 
 def loadConfig(path):
     try:
@@ -160,6 +150,9 @@ def connectOpenstack(OS_USERNAME, OS_PASSWORD, OS_TENANT_NAME, OS_AUTH_URL):
         exit(-1)
 
 
+
+
+
 def buildSecurityGroup(connection, id):
     securityGroup = connection.security_groups.get("7bf17971-183d-4d31-97fe-a5d17630056d")
 
@@ -177,11 +170,26 @@ def buildSecurityGroup(connection, id):
     return securityGroup
 
 
-def assignFloatingIP(connection, instance):
+def assignFloatingIPBlind(connection, instance, tenantName, floatingPool):
     floatingIPList = connection.floating_ips.list()
     freeFloatingIP = None
     for floatingIp in floatingIPList:
-        if floatingIp.pool == 'cebitec' and floatingIp.fixed_ip is None:
+        if floatingIp.pool == floatingPool and floatingIp.fixed_ip is None:
+            freeFloatingIp = floatingIp
+            break
+    if freeFloatingIp is None:
+        print("FATAL: No free floating ip could be found...")
+        exit(-1)
+    print("Assigning following floating IP (may take a while): " + str(freeFloatingIp.ip))
+    sleep(10)
+    instance.add_floating_ip(freeFloatingIp.ip)
+    return freeFloatingIp.ip
+
+def assignFloatingIP(connection, instance, tenantName, floatingPool):
+    floatingIPList = connection.floating_ips.list()
+    freeFloatingIP = None
+    for floatingIp in floatingIPList:
+        if floatingIp.pool == floatingPool and floatingIp.fixed_ip is None:
             freeFloatingIp = floatingIp
             break
     if freeFloatingIp is None:
@@ -191,13 +199,29 @@ def assignFloatingIP(connection, instance):
     sleep(10)
     instance.add_floating_ip(freeFloatingIp.ip)
     #print("Discovery Service has been started, it may need a while to fully boot up.")
-    #TODO: REMOVE HARDCODED TENANTNAME
     sleep(10)
-    print("Discovery internal IP: " + str(instance.addresses['bibiserv'][0]['addr']))
+    print("Discovery internal IP: " + str(instance.addresses[tenantName][0]['addr']))
     print("Discovery floating IP: " + str(freeFloatingIp.ip))
-    return {'internal': instance.addresses['bibiserv'][0]['addr'],
+    return {'internal': instance.addresses[tenantName][0]['addr'],
             'floating': freeFloatingIp.ip,
-            'newDiscovery': False}
+            'newDiscovery': False,
+            'discInstance': instance}
+
+
+def removeFloatingIP(instance, ipToBeRemoved):
+    try:
+        instance.remove_floating_ip(ipToBeRemoved)
+    except:
+        print("Could not remove flaoting ip.")
+
+
+
+def getInstanceByName(instancePlan, instanceName):
+    serverList = instancePlan['osConnection'].servers.list()
+    for server in serverList:
+        if server.name == instanceName:
+            return server
+    print("No Instance by the name: " + instanceName)
 
 
 '''
@@ -206,15 +230,18 @@ Check if we have a discovery url in given config file, if not, set a service up
 def checkDiscoveryService(environmentDict, configFile, instancePlan):
     #Check if discovery service already exists...
     serverList = instancePlan['osConnection'].servers.list()
+    tenantName = instancePlan['tenantName']
+    floatingPool = instancePlan['floatingPool']
     for server in serverList:
         if server.name == 'CoreOS Discovery Service':
-            if len(server.addresses['bibiserv']) == 2:
-                return  {'internal': server.addresses['bibiserv'][0]['addr'],
-                         'floating': server.addresses['bibiserv'][1]['addr'],
-                         'newDiscovery': False}
+            if len(server.addresses[tenantName]) == 2:
+                return  {'internal': server.addresses[tenantName][0]['addr'],
+                         'floating': server.addresses[tenantName][1]['addr'],
+                         'newDiscovery': False,
+                         'discInstance': server}
             else:
                 #print(len(server.addresses['bibiserv']))
-                return assignFloatingIP(instancePlan['osConnection'], server)
+                return assignFloatingIP(instancePlan['osConnection'], server, tenantName, floatingPool)
     try:
         discurl = {'superiorIP': configFile['discovery']['DISCOVERY_URL']}
         return discurl
@@ -226,40 +253,53 @@ def createDiscoveryService(instancePlan):
     print('------------------------------------')
     print("Setting up a discovery instance...")
     discoveryConfig = open(DISCOVERY_CONFIG_PATH)
+    tenantName = instancePlan['tenantName']
+    floatingPool = instancePlan['floatingPool']
     instanceName = "CoreOS Discovery Service"
-    #TODO: Keyname support in config file
     discServiceInstance = instancePlan['osConnection'].servers.create(instanceName,
                                                 instancePlan['coreosImage'],
                                                 instancePlan['flavor'],
                                                 nics=[{'net-id': instancePlan['standardNic'].id}],
                                                 userdata=discoveryConfig,
-                                                key_name='awalende',
+                                                key_name=instancePlan['ssh_name'],
                                                 security_groups=[instancePlan['securityGroup'].name])
-    ipDict = assignFloatingIP(instancePlan['osConnection'], discServiceInstance)
+    ipDict = assignFloatingIP(instancePlan['osConnection'], discServiceInstance, tenantName, floatingPool)
     ipDict['newDiscovery'] = True
     return ipDict
 
 
 def createNodeInstance(instancePlan, count):
     print("Starting instance...")
-    discServiceInstance = instancePlan['osConnection'].servers.create(instancePlan['ClusterName'] + 'node',
+    discServiceInstance = instancePlan['osConnection'].servers.create(instancePlan['ClusterName'],
                                                 instancePlan['coreosImage'],
                                                 instancePlan['flavor'],
                                                 nics=[{'net-id': instancePlan['standardNic'].id}],
                                                 userdata=instancePlan['cloudConfigYaml'],
-                                                key_name='awalende',
+                                                key_name=instancePlan['ssh_name'],
                                                 min_count=count,
                                                 max_count=count,
                                                 security_groups=[instancePlan['securityGroup'].name])
 
 
 
+
 if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print("USAGE: python3 " + str(sys.argv[0]) + " [INI CONFIG PATH] [DESIRED NODE COUNT]" )
+        exit(-1)
+
+
+
+
+    INI_PATH = sys.argv[1]
+    INSTANCE_COUNTS = int(sys.argv[2])
+
+
     #Generate RandomID for this cluster.
     clusterID = random.randint(1000, 999999)
     strClusterID = "CoreOS-" + str(clusterID)
     #Prepare Variables and parse config file.
-    configFile = loadConfig("/home/awalende/config.ini")
+    configFile = loadConfig(INI_PATH)
     environmentDict = createEnvironmentDict(configFile)
     #Establish a connection to Openstack
     instancePlan = {}
@@ -268,6 +308,8 @@ if __name__ == '__main__':
                      environmentDict['OS_TENANT_NAME'],
                      environmentDict['OS_AUTH_URL'])
     instancePlan['ClusterName'] = strClusterID
+    instancePlan['tenantName'] = environmentDict['OS_TENANT_NAME']
+    instancePlan['floatingPool'] = environmentDict['FLOATING_IP_POOL']
 
     #Obtain ImageID
     instancePlan['coreosImage'] = obtain_coreos_image(instancePlan['osConnection'])
@@ -276,11 +318,14 @@ if __name__ == '__main__':
     instancePlan['securityGroup'] = buildSecurityGroup(instancePlan['osConnection'], strClusterID)
 
     #Setup Network interface, must be put in list for nova api
-    standardNic = obtainNIC(instancePlan['osConnection'])
+    standardNic = obtainNIC(instancePlan['osConnection'], environmentDict['OS_TENANT_NAME'])
     instancePlan['standardNic'] = standardNic
 
     #Obtain Flavor
-    instancePlan['flavor'] = obtainDesiredFlavor(instancePlan['osConnection'])
+    instancePlan['flavor'] = obtainDesiredFlavor(instancePlan['osConnection'], environmentDict['OS_FLAVOR'])
+
+    #SSH Stuff
+    instancePlan['ssh_name'] = environmentDict['OS_SSH_NAME']
 
 
     #Make sure we have a discovery service running
@@ -288,10 +333,25 @@ if __name__ == '__main__':
     if discoveryIPdict is None:
         discoveryIPdict = createDiscoveryService(instancePlan)
 
-    #TODO: Parameterize instance count
-    tokenURL = generateDiscoveryToken(discoveryIPdict, strClusterID, 3)
+    tokenURL = generateDiscoveryToken(discoveryIPdict, strClusterID, INSTANCE_COUNTS)
+
+    removeFloatingIP(discoveryIPdict['discInstance'], discoveryIPdict['floating'])
+
     instancePlan['cloudConfigYaml'] = prepareCloudConfig(CLOUD_CONFIG_PATH, tokenURL)
 
 
-    createNodeInstance(instancePlan, 3)
+    createNodeInstance(instancePlan, INSTANCE_COUNTS)
+
+
+    firstNode = getInstanceByName(instancePlan, strClusterID+"-1")
+    #Assign floating ip to first node
+    print("Adding floating IP to first node of the cluster...")
+    firstNodeIP = assignFloatingIPBlind(instancePlan['osConnection'],
+                     firstNode,
+                     instancePlan['tenantName'],
+                     instancePlan['floatingPool'])
+    print("-----------------------------------------------------------------------------")
+    print("You can now SSH into a node with your SSH Key to core@" + str(firstNodeIP))
+    print("Have a nice day!")
+
 
