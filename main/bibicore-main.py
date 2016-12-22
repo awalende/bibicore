@@ -12,46 +12,54 @@ import requests
 DIR_PATH = os.path.dirname(os.path.realpath(__file__))
 CLOUD_CONFIG_PATH= DIR_PATH+ "/yaml/cloud-config.yaml"
 DISCOVERY_CONFIG_PATH = DIR_PATH + "/yaml/discovery.yaml"
-
 TOKEN_TIMEOUT=10
 TOKEN_SUFFIX='/v2/keys/_etcd/registry/'
 
-
 '''
 TODO:
-At end of script, set floating IP to first node and give ip-info to user.
-Give some love to the config file.
 Write Readme.
 '''
 
 
+'''
+Checks if a environment variable is actually set in the operating system without
+throwing any exceptions.
+'''
 def checkEnvironmentFromOS(key):
     return key in os.environ
 
+'''
+Check if all mandatory variables for openstack are set and findable.
+If a variable is not set, the programm will exit.
+Compare the example file, located at ../config/example.ini for further infos.
+'''
 def validateEnvironmentDict(dict, configFile):
     newDict = {}
     itemList = dict.items()
     for item in itemList:
         if item[1] == "":
-            print(item[0] + " is not set, looking for environment variable from OS.")
+            #print(item[0] + " is not set, looking for environment variable from OS.")
             if checkEnvironmentFromOS(item[0]):
-                print("Found corresponding environment variable!")
+                print("Found corresponding environment variable: " + item[0])
                 newDict[item[0]] = os.environ[item[0]]
                 continue
             else:
-                print("Looking for variable in .ini file...")
+                #print("Looking for variable in .ini file...")
                 try:
                     newDict[item[0]] = configFile['config'][item[0]]
-                    print("..found key in config file!")
-
+                    print("Found variable in config file: " + item[0])
                     continue
                 except KeyError:
                     print("Key named " + item[0] + " not found in OS or config file!")
+                    print("Make sure all variables are set either by environment or config.ini file. Exiting.")
+                    exit(-1)
         newDict[item[0]] = item[1]
     return newDict
 
 
-#check and overwrite variables
+'''
+Builds and returns the essential dictionary with all important fields for openstack.
+'''
 def createEnvironmentDict(configFile):
     #needs to be cleaned up after debugging
     environmentDict = {}
@@ -66,7 +74,9 @@ def createEnvironmentDict(configFile):
     return environmentDict
 
 
-
+'''
+Returns an image object if there is any CoreOS Image in the imagebrowser of openstack.
+'''
 def obtain_coreos_image(connection):
     imageList = connection.images.list()
     for image in imageList:
@@ -76,7 +86,9 @@ def obtain_coreos_image(connection):
     print("Could not find any CoreOS Image...exiting.")
     exit(-1)
 
-
+'''
+Returns a NIC Object.
+'''
 def obtainNIC(connection, NICName):
     nicList = connection.networks.list()
     for network in nicList:
@@ -87,7 +99,10 @@ def obtainNIC(connection, NICName):
     print(nicList)
     exit(-1)
 
-
+'''
+Returns a flavor object, depending on the given name of the flavor.
+If no matching flavor could be found, the programm will exit and print possible flavors.
+'''
 def obtainDesiredFlavor(connection, flavorName):
     flavorList = connection.flavors.list()
     for flavor in flavorList:
@@ -98,6 +113,25 @@ def obtainDesiredFlavor(connection, flavorName):
     print(flavorList)
     exit(-1)
 
+'''
+Returns an optional flavor for the discovery service, if needed.
+Will not exit the programm if there are no flavors.
+'''
+def getDiscoveryFlavour(connection, configFile):
+    try:
+        desiredFlavor = configFile['discovery']['DISCOVERY_FLAVOR']
+        flavorList = connection.flavors.list()
+        for flavor in flavorList:
+            if flavor.name == desiredFlavor:
+                print("Found desired flavor for discovery service: " +desiredFlavor)
+                return flavor
+        print("Could not find flavor: " + desiredFlavor + "\n" "Following flavors are available:")
+        print(flavorList)
+        exit(-1)
+    except KeyError:
+        print("No special flavor for the discoveryservice has been set, taking default node flavor.")
+        return None
+    return desiredFlavor
 
 def loadConfig(path):
     try:
@@ -108,7 +142,10 @@ def loadConfig(path):
         print("Could not find config file at " + path)
         exit(-1)
 
-
+'''
+Assembles the initial cloud-config file for spawning nodes.
+It uses a template located at ./yaml/cloud-config.yaml
+'''
 def prepareCloudConfig(configPath, tokenURL):
     try:
        file = open(configPath)
@@ -121,7 +158,9 @@ def prepareCloudConfig(configPath, tokenURL):
     except FileNotFoundError:
         pass
 
-
+'''
+Uses REST API on a discovery service, to generate a discovery token for future nodes to use.
+'''
 def generateDiscoveryToken(discoveryDict, randomToken, size):
     print("Trying to create a discovery token on " + str(discoveryDict['floating']))
     tokenURL = 'http://' + str(discoveryDict['floating']) + ':4001' + TOKEN_SUFFIX + str(randomToken)
@@ -140,6 +179,9 @@ def generateDiscoveryToken(discoveryDict, randomToken, size):
     return 'http://' + str(discoveryDict['internal']) + ':4001' + TOKEN_SUFFIX + str(randomToken)
 
 
+'''
+Connect to openstack given security credentials.
+'''
 def connectOpenstack(OS_USERNAME, OS_PASSWORD, OS_TENANT_NAME, OS_AUTH_URL):
     try:
         nova = client.Client("2", OS_USERNAME, OS_PASSWORD, OS_TENANT_NAME, OS_AUTH_URL)
@@ -150,9 +192,10 @@ def connectOpenstack(OS_USERNAME, OS_PASSWORD, OS_TENANT_NAME, OS_AUTH_URL):
         exit(-1)
 
 
-
-
-
+'''
+Build mandatory firewall group for all instances.
+TODO: Use Neutron API to actually do that.
+'''
 def buildSecurityGroup(connection, id):
     securityGroup = connection.security_groups.get("7bf17971-183d-4d31-97fe-a5d17630056d")
 
@@ -169,7 +212,9 @@ def buildSecurityGroup(connection, id):
     '''
     return securityGroup
 
-
+'''
+Assigns a floating IP to an instance without obtaining network infos.
+'''
 def assignFloatingIPBlind(connection, instance, tenantName, floatingPool):
     floatingIPList = connection.floating_ips.list()
     freeFloatingIP = None
@@ -185,6 +230,9 @@ def assignFloatingIPBlind(connection, instance, tenantName, floatingPool):
     instance.add_floating_ip(freeFloatingIp.ip)
     return freeFloatingIp.ip
 
+'''
+Assign a floating IP to an instance and return network informations.
+'''
 def assignFloatingIP(connection, instance, tenantName, floatingPool):
     floatingIPList = connection.floating_ips.list()
     freeFloatingIP = None
@@ -207,15 +255,19 @@ def assignFloatingIP(connection, instance, tenantName, floatingPool):
             'newDiscovery': False,
             'discInstance': instance}
 
-
+'''
+Removes a floating ip form an instance.
+'''
 def removeFloatingIP(instance, ipToBeRemoved):
     try:
         instance.remove_floating_ip(ipToBeRemoved)
     except:
-        print("Could not remove flaoting ip.")
+        print("Could not remove floating ip.")
 
 
-
+'''
+Returns an instance object given by the name of the instance.
+'''
 def getInstanceByName(instancePlan, instanceName):
     serverList = instancePlan['osConnection'].servers.list()
     for server in serverList:
@@ -248,17 +300,24 @@ def checkDiscoveryService(environmentDict, configFile, instancePlan):
     except KeyError:
         return None
 
+'''
+Builds an instance for discovery service, using etcd2 service from CoreOS.
+'''
 def createDiscoveryService(instancePlan):
     print('')
     print('------------------------------------')
     print("Setting up a discovery instance...")
     discoveryConfig = open(DISCOVERY_CONFIG_PATH)
+    if instancePlan['discoveryFlavor'] is not None:
+        flavor = instancePlan['discoveryFlavor']
+    else:
+        flavor = instancePlan['flavor']
     tenantName = instancePlan['tenantName']
     floatingPool = instancePlan['floatingPool']
     instanceName = "CoreOS Discovery Service"
     discServiceInstance = instancePlan['osConnection'].servers.create(instanceName,
                                                 instancePlan['coreosImage'],
-                                                instancePlan['flavor'],
+                                                flavor,
                                                 nics=[{'net-id': instancePlan['standardNic'].id}],
                                                 userdata=discoveryConfig,
                                                 key_name=instancePlan['ssh_name'],
@@ -267,7 +326,9 @@ def createDiscoveryService(instancePlan):
     ipDict['newDiscovery'] = True
     return ipDict
 
-
+'''
+Spawns all nodes.
+'''
 def createNodeInstance(instancePlan, count):
     print("Starting instance...")
     discServiceInstance = instancePlan['osConnection'].servers.create(instancePlan['ClusterName'],
@@ -288,19 +349,18 @@ if __name__ == '__main__':
         print("USAGE: python3 " + str(sys.argv[0]) + " [INI CONFIG PATH] [DESIRED NODE COUNT]" )
         exit(-1)
 
-
-
-
+    #Gather parameters, maybe needs more defensive programming?
     INI_PATH = sys.argv[1]
     INSTANCE_COUNTS = int(sys.argv[2])
-
 
     #Generate RandomID for this cluster.
     clusterID = random.randint(1000, 999999)
     strClusterID = "CoreOS-" + str(clusterID)
+
     #Prepare Variables and parse config file.
     configFile = loadConfig(INI_PATH)
     environmentDict = createEnvironmentDict(configFile)
+
     #Establish a connection to Openstack
     instancePlan = {}
     instancePlan['osConnection'] = connectOpenstack(environmentDict['OS_USERNAME'],
@@ -321,8 +381,9 @@ if __name__ == '__main__':
     standardNic = obtainNIC(instancePlan['osConnection'], environmentDict['OS_TENANT_NAME'])
     instancePlan['standardNic'] = standardNic
 
-    #Obtain Flavor
+    #Obtain Flavors
     instancePlan['flavor'] = obtainDesiredFlavor(instancePlan['osConnection'], environmentDict['OS_FLAVOR'])
+    instancePlan['discoveryFlavor'] = getDiscoveryFlavour(instancePlan['osConnection'], configFile)
 
     #SSH Stuff
     instancePlan['ssh_name'] = environmentDict['OS_SSH_NAME']
@@ -333,25 +394,32 @@ if __name__ == '__main__':
     if discoveryIPdict is None:
         discoveryIPdict = createDiscoveryService(instancePlan)
 
+    #Generate a discovery token, given the name of the cluster and the number of wished nodes.
     tokenURL = generateDiscoveryToken(discoveryIPdict, strClusterID, INSTANCE_COUNTS)
 
+    #No need for a floating ip for the discovery service, after we got a token.
     removeFloatingIP(discoveryIPdict['discInstance'], discoveryIPdict['floating'])
 
+    #Assemble the initial cloud-config for the cluster, with the freshly generated token.
     instancePlan['cloudConfigYaml'] = prepareCloudConfig(CLOUD_CONFIG_PATH, tokenURL)
 
-
+    #Now we are ready to spawn all the instances, given the build plan and the amount of desired nodes.
     createNodeInstance(instancePlan, INSTANCE_COUNTS)
 
-
+    #For comfort, we want to give the first spawned node a floating ip.
     firstNode = getInstanceByName(instancePlan, strClusterID+"-1")
+
     #Assign floating ip to first node
     print("Adding floating IP to first node of the cluster...")
     firstNodeIP = assignFloatingIPBlind(instancePlan['osConnection'],
                      firstNode,
                      instancePlan['tenantName'],
                      instancePlan['floatingPool'])
+
+    #The war is ours! ^o^
     print("-----------------------------------------------------------------------------")
     print("You can now SSH into a node with your SSH Key to core@" + str(firstNodeIP))
     print("Have a nice day!")
+    exit(0)
 
 
