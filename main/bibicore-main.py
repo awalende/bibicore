@@ -418,7 +418,9 @@ if __name__ == '__main__':
 
     #The war is ours! ^o^
     print("-----------------------------------------------------------------------------")
-    print("You can now SSH into a node with your SSH Key to core@" + str(firstNodeIP))
+    print("Created all nodes, make sure to register a ssh agent with:")
+    print("eval $(ssh-agent); ssh-add <PATH TO PRIVATE SSH KEY>")
+    print("You can now SSH into a node with: ssh -A core@" + str(firstNodeIP))
     print("Have a nice day!")
     exit(0)
 
