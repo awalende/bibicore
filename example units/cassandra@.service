@@ -9,7 +9,7 @@ ExecStartPre=-/usr/bin/docker kill cassandraMaster
 ExecStartPre=-/usr/bin/docker rm cassandraMaster
 ExecStartPre=-/usr/bin/docker kill cassandraSlave
 ExecStartPre=-/usr/bin/docker rm cassandraSlave
-ExecStart=/bin/bash -c "etcdctl get /cassandra/ip1; if [ $? -eq 0 ]; then sleep $(shuf -i30-150 -n1); docker run --name cassandraSlave -d -e CASSANDRA_BROADCAST_ADDRESS=$COREOS_PRIVATE_IPV4 -p 7000:7000 -e CASSANDRA_SEEDS=$(etcdctl get /cassandra/ip1) cassandra;else etcdctl set /cassandra/ip1 $COREOS_PRIVATE_IPV4; docker run --name cassandraMaster -d -e CASSANDRA_BROADCAST_ADDRESS=$COREOS_PRIVATE_IPV4 -p 7000:7000 cassandra; fi; while true; do sleep 3; done;"
+ExecStart=/bin/bash -c "etcdctl get /cassandra/ip1; if [ $? -eq 0 ]; then sleep $(shuf -i30-150 -n1); docker run --restart=on-failure --name cassandraSlave -d -e CASSANDRA_BROADCAST_ADDRESS=$COREOS_PRIVATE_IPV4 -p 7000:7000 -e CASSANDRA_SEEDS=$(etcdctl get /cassandra/ip1) cassandra;else etcdctl set /cassandra/ip1 $COREOS_PRIVATE_IPV4; docker run --name cassandraMaster -d -e CASSANDRA_BROADCAST_ADDRESS=$COREOS_PRIVATE_IPV4 -p 7000:7000 cassandra; fi; while true; do sleep 3; done;"
 ExecStop=/usr/bin/etcdctl rm /cassandra/ip1
 ExecStop=/usr/bin/docker stop cassandraMaster
 ExecStop=/usr/bin/docker stop cassandraSlave
